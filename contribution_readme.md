@@ -2,9 +2,9 @@
 
 **Contribution Number:** 1
 
-**Student:** Tien Nguyen (GitHub: [@tiennguyen2310](https://github.com/tiennguyen2310))
+**Student:** Tien Nguyen (GitHub: [@tientnc](https://github.com/tientnc))
 
-**Issue:** https://github.com/swiftlang/swift-java/issues/425 (Fork: [link](https://github.com/tiennguyen2310/swift-java))
+**Issue:** https://github.com/swiftlang/swift-java/issues/425 (Fork: [link](https://github.com/tientnc/swift-java))
 
 **Status:** Phase IV Complete
 

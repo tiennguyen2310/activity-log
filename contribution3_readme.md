@@ -3,7 +3,7 @@
 **Contribution Number:** 3  
 **Student:** Tien Nguyen (GitHub: [@tientnc](https://github.com/tientnc))  
 **Issue:** [PyO3/maturin #1975](https://github.com/PyO3/maturin/issues/1975) (Fork: not yet created)  
-**Status:** Phase II Complete (reproduction confirmed; implementation not yet started)
+**Status:** Phase II Complete (reproduction confirmed twice; implementation not yet started)
 
 ---
 
@@ -12,6 +12,8 @@
 I chose `PyO3/maturin` issue #1975 to get experience outside the Swift/Java ecosystem from my first two contributions. `maturin` is a mature Rust project (5,600+ stars) that builds Python wheels for Rust extensions, and picking it let me learn Rust CLI conventions along with Python's `sysconfig`/`sys.version_info` internals.
 
 Before selecting it, I checked whether it was actually claimable: open, labeled `good first issue`, and unassigned. There was some history to work through, though. `fatelei` commented "i want to have a try" back in March 2024 and got assigned by maintainer `messense`, but maintainer `konstin` unassigned `fatelei` on 2026-01-05 (I confirmed this through the GitHub Timeline API, which turned out to be more reliable here than the `/events` REST endpoint), and no PR ever came out of it (`search/issues?q=repo:PyO3/maturin+1975+type:pr` returns 0 results). I also chased down a cross-reference that looked like competing work at first: a bot review comment on an unrelated repo's PR (`CelestoAI/SmolVM#146`) mentioned the issue in passing, but it wasn't actual work on the fix. Since a maintainer had deliberately freed the issue up, I treated it as genuinely available.
+
+I posted a comment on the issue describing my reproduction and plan, but haven't heard back from a maintainer yet.
 
 ---
 
@@ -42,34 +44,38 @@ There is no prerelease filtering anywhere in the discovery path, and no `--allow
 
 ### Environment Setup
 
-No Rust toolchain was on my machine, so I installed one with `rustup` (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -y --default-toolchain stable --profile default`), which resolved to Rust 1.96.1. No `sudo` was needed, the same constraint I had during my Swift-Java setup. I cloned `https://github.com/PyO3/maturin.git` directly with no fork yet, since I haven't started implementation. `cargo build` finished cleanly in about 3 minutes at HEAD commit `e54b7775`, with no missing system dependencies.
+My machine didn't have Rust installed, so I installed it with `rustup`, the standard Rust installer. No `sudo` was needed. I then cloned the maturin repo and built it with `cargo build`, no extra setup required. I haven't made a fork yet since I'm still in the investigation stage, not writing code.
 
 ### Steps to Reproduce
 
-1. Confirm the real interpreter reports prerelease info natively: `python3 -c "import sys; print(sys.version_info)"` → `sys.version_info(major=3, minor=12, micro=3, releaselevel='final', serial=0)`.
-2. Run maturin's own probe script against that same interpreter: `python3 src/python_interpreter/get_interpreter_metadata.py` → JSON output with `major`/`minor`/`abiflags`/etc., but **no `releaselevel` key at all**.
-3. Search the codebase for any existing prerelease handling in the native-discovery path: `grep -rn "releaselevel\|allow_prerelease" src/`. The only hits are in `cross_compile.rs`'s cross-compilation-target test fixtures, nothing in `discovery.rs` or `build_options.rs`.
-4. Check the built CLI directly: `./target/debug/maturin build --help | grep -i prerelease` → no output; the flag does not exist.
-5. **Observed:** the feature described in the issue is completely unimplemented on current `main`. It's not a regression and not partially done, it's just missing.
+Since the maintainer hadn't replied yet, I wanted a simple way to double-check the bug is still there before waiting further. Here's what I did, in plain terms:
+
+1. **Check what Python itself already knows.** Run `python3 -c "import sys; print(sys.version_info)"`. Python prints a `releaselevel` value (e.g. `final`), so Python already tracks whether it's a real release or a preview build like alpha/beta/rc.
+2. **Run maturin's own script that's supposed to collect this info.** `python3 src/python_interpreter/get_interpreter_metadata.py`. Its output is missing the `releaselevel` field completely, even though Python hands it over for free in step 1.
+3. **Search maturin's code for anything using that field.** `grep -rn "releaselevel" src/`. It only shows up in one unrelated test file for a different feature (cross-compiling to other operating systems), never in the actual interpreter-discovery code that `--find-interpreter` uses.
+4. **Check if the flag from the issue exists.** Run `maturin build --help` and look for `--allow-prereleases`. It's not there.
+
+**Result:** the feature described in the issue simply hasn't been built yet. It's not a partial fix and not a bug that broke it later, the code for it doesn't exist.
+
+I repeated all four steps again on 2026-07-14 after pulling the newest changes from the project (8 new commits since my first check), to make sure nothing had changed while waiting for a reply. The result was identical: still no `releaselevel` field, still no `--allow-prereleases` flag.
 
 ### Reproduction Evidence
 
 - **Commit showing reproduction:** none yet. I haven't forked or branched since this is Phase II (investigation), not Phase III (implementation).
-- **Logs:**
+- **Logs (first check, commit `e54b7775`, and repeated on commit `8f981619`, same result both times):**
   ```
   $ python3 -c "import sys; print(sys.version_info)"
   sys.version_info(major=3, minor=12, micro=3, releaselevel='final', serial=0)
 
   $ python3 src/python_interpreter/get_interpreter_metadata.py
-  {"implementation_name": "cpython", "executable": "...", "major": 3, "minor": 12,
-   "abiflags": "", "interpreter": "cpython", "ext_suffix": "...", "soabi": "...",
-   "platform": "linux-x86_64", "system": "linux", "pointer_width": 64, "gil_disabled": false}
+  {"implementation_name": "cpython", "major": 3, "minor": 12, "abiflags": "",
+   "interpreter": "cpython", "platform": "linux-x86_64", "system": "linux", ...}
+  # no "releaselevel" key anywhere in this output
 
-  $ ./target/debug/maturin build --help | grep -i -A2 "find-interpreter\|prerelease"
-    -f, --find-interpreter
-            Find interpreters from the host machine
+  $ ./target/debug/maturin build --help | grep -i prerelease
+  # (no output, the flag doesn't exist)
   ```
-- **My findings:** the gap isn't a missed filter condition somewhere in the Rust code. The prerelease information is dropped at the very first step, the Python-side probe script, so nothing downstream in Rust could distinguish a prerelease interpreter even if it wanted to. That tells me the actual first step of the fix: add the field at the source before any Rust-side logic can use it.
+- **My findings:** the missing piece isn't a filter condition hiding somewhere in the Rust code. The information is dropped at the very first step, the small Python script maturin runs to inspect each interpreter, so nothing later in the program could use it even if it wanted to. That's the actual starting point for the fix: add the field where it's collected, before anything downstream can act on it.
 
 ---
 
@@ -77,7 +83,9 @@ No Rust toolchain was on my machine, so I installed one with `rustup` (`curl --p
 
 ### Analysis
 
-[Your analysis of the root cause - what's causing the issue?]
+For example, every Python install already knows whether it's a finished release or an early preview (alpha/beta/rc), the same way software might be labeled "stable" or "beta." maturin just never asks Python for that label. When it scans a computer for available Python versions, it runs a small helper script that collects basic details like the version number, but that script skips the one field that would say "this is a preview build." Because that detail is never collected in the first place, nothing later in maturin has any way to know an installation is a prerelease, so it treats every version the same and builds a wheel for it regardless.
+
+More technically: the probe script (`get_interpreter_metadata.py`) never reads Python's `sys.version_info.releaselevel`, so the `InterpreterMetadataMessage` struct that carries this data into the Rust code has no field for it. Every function downstream of that, like `from_metadata_message()` and `find_all()`, has nothing to check even if it wanted to. The fix has to start at that first collection point, not somewhere deeper in the discovery logic.
 
 ### Proposed Solution
 
@@ -127,7 +135,7 @@ Using UMPIRE framework (adapted):
 
 ### Week 1 Progress
 
-I audited issue #1975 for claimability (checked assignee history via the Timeline API, searched for any competing PR, and ruled out a false-positive bot cross-reference from an unrelated repo), installed a Rust toolchain, and cloned the repo. Then I confirmed, through actually running the script rather than just reading the source, that `releaselevel` gets dropped at the very first stage of interpreter discovery (`get_interpreter_metadata.py`) and never reaches any Rust code. I'm posting a reproduction comment on the issue before starting Phase III, the same practice that worked well on my first two contributions of getting maintainer sign-off before writing code.
+I audited issue #1975 for claimability (checked assignee history via the Timeline API, searched for any competing PR, and ruled out a false-positive bot cross-reference from an unrelated repo), installed a Rust toolchain, and cloned the repo. Then I confirmed, through actually running the script rather than just reading the source, that `releaselevel` gets dropped at the very first stage of interpreter discovery (`get_interpreter_metadata.py`) and never reaches any Rust code. I posted a reproduction comment on the issue before starting Phase III, the same practice that worked well on my first two contributions of getting maintainer sign-off before writing code, and re-ran the same checks a week later against the latest code since I hadn't heard back yet.
 
 ### Week [X] Progress
 

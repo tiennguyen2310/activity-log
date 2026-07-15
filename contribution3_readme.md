@@ -36,7 +36,7 @@ There is no prerelease filtering anywhere in the discovery path, and no `--allow
 - `src/python_interpreter/get_interpreter_metadata.py`: the script maturin runs inside each candidate interpreter to collect metadata. It never reads `sys.version_info.releaselevel`/`serial`.
 - `src/python_interpreter/discovery.rs`: `InterpreterMetadataMessage` (the struct populated from that script's JSON output) has no `releaselevel` field. `from_metadata_message()` builds a `PythonInterpreter` with no maturity check, and `cpython_candidate_names()`/`find_all()` generate and probe candidate binaries (e.g. `python3.14`) purely by minor version.
 - `src/build_options.rs`: `PythonOptions` has no `allow_prereleases` field or CLI flag.
-- One interesting wrinkle: `src/cross_compile.rs` already parses `releaselevel` from a target's `build-details.json` for *cross-compilation* targets, but only on that separate path, and the value gets discarded instead of enforced. So the concept already exists in the codebase, it's just not wired into native discovery or enforcement anywhere.
+- `src/cross_compile.rs`: worth flagging so it isn't mistaken for existing support. `releaselevel` does appear in this file, but only inside PEP 739 `build-details.json` fixtures used by tests. The struct that actually parses those files (`BuildDetailsImplementation`) declares only a `name` field, and serde silently drops unknown keys, so `releaselevel` is never read even on the cross-compile path. In other words, nothing anywhere in maturin currently consumes this field.
 
 ---
 
@@ -83,32 +83,42 @@ I repeated all four steps again on 2026-07-14 after pulling the newest changes f
 
 ### Analysis
 
-For example, every Python install already knows whether it's a finished release or an early preview (alpha/beta/rc), the same way software might be labeled "stable" or "beta." maturin just never asks Python for that label. When it scans a computer for available Python versions, it runs a small helper script that collects basic details like the version number, but that script skips the one field that would say "this is a preview build." Because that detail is never collected in the first place, nothing later in maturin has any way to know an installation is a prerelease, so it treats every version the same and builds a wheel for it regardless.
+Every Python install already knows whether it's a finished release or an early preview (alpha/beta/rc), the same way software might be labeled "stable" or "beta." maturin just never asks Python for that label. When it scans a computer for available Python versions, it runs a small helper script that collects basic details like the version number, but that script skips the one field that would say "this is a preview build." Because that detail is never collected in the first place, nothing later in maturin has any way to know an installation is a prerelease, so it treats every version the same and builds a wheel for it regardless.
 
 More technically: the probe script (`get_interpreter_metadata.py`) never reads Python's `sys.version_info.releaselevel`, so the `InterpreterMetadataMessage` struct that carries this data into the Rust code has no field for it. Every function downstream of that, like `from_metadata_message()` and `find_all()`, has nothing to check even if it wanted to. The fix has to start at that first collection point, not somewhere deeper in the discovery logic.
 
 ### Proposed Solution
 
-[High-level description of your fix approach]
+Fix it in the same order the information flows, starting at the point where it's currently lost. Four connected changes:
+
+1. **Collect the label.** Add `releaselevel` to the small probe script (`get_interpreter_metadata.py`) so every interpreter maturin inspects now reports whether it's a `final` release or a preview (`alpha`/`beta`/`candidate`).
+2. **Carry it into the Rust side.** Add a matching `releaselevel` field to `InterpreterMetadataMessage`, and record on each discovered interpreter whether it's a prerelease.
+3. **Filter at the right moment.** In the interpreter resolver — the one place that already knows both which interpreters were found *and* which flags the user passed — drop any auto-discovered prerelease and print a short notice (e.g. "Skipping prerelease Python 3.14.0a1; pass `--allow-prereleases` to build for it"). Interpreters the user names explicitly with `-i` are left untouched, since naming one by hand is already an opt-in.
+4. **Add the opt-in.** A new `--allow-prereleases` flag that turns the filter off.
+
+Keeping the decision in the resolver rather than deeper in discovery means the skip-or-keep logic and its warning have all the context they need in one place, and the lower-level discovery code stays a plain "report what exists" layer.
 
 ### Implementation Plan
 
 Using UMPIRE framework (adapted):
 
-**Understand:** [Restate the problem]
+**Understand:** `-f/--find-interpreter` builds a wheel for every Python it finds, preview builds included, with no way to say "released versions only." I need to add prerelease detection and make prereleases opt-in via `--allow-prereleases`, without changing behavior for interpreters the user names explicitly.
 
-**Match:** [What similar patterns/solutions exist in the codebase?]
+**Match:** `gil_disabled` is a near-identical, recent precedent — a boolean that starts in `get_interpreter_metadata.py`, rides through `InterpreterMetadataMessage`, and is consumed on the Rust side (`abiflags.rs`, `config.rs`). I'll follow that same path for `releaselevel`. For the "skip an interpreter and say why" behavior, `from_metadata_message()` already does exactly this for outdated versions and Windows architecture mismatches (returns `Ok(None)` and prints a `⚠️` (or similar) notice), so the skip pattern and message style are already there to copy. (`releaselevel` also appears in `cross_compile.rs` test fixtures for PEP 739 `build-details.json`, but the parser there doesn't actually read the field, so that path is separate and out of scope.)
 
-**Plan:** [Step-by-step implementation plan]
-1. [Modify file X to do Y]
-2. [Add function Z]
-3. [Update tests]
+**Plan:** Step-by-step implementation plan
+1. `get_interpreter_metadata.py`: add `"releaselevel": sys.version_info.releaselevel` to the metadata dict.
+2. `discovery.rs`: add `releaselevel: String` to `InterpreterMetadataMessage`; in `from_metadata_message()`, compute `is_prerelease` (`releaselevel != "final"`) and store it on the returned `PythonInterpreter`. Bundled/sysconfig interpreters (which never run the script) default to not-prerelease.
+3. `config.rs`: add the `is_prerelease` field to `PythonInterpreter`/`InterpreterConfig`.
+4. `build_options.rs`: add `--allow-prereleases` (`allow_prereleases: bool`) to `PythonOptions`, alongside `find_interpreter`.
+5. `resolver.rs`: thread `allow_prereleases` into `InterpreterResolver`; in `discover_native()`'s `find_interpreter` branch, filter out prereleases unless the flag is set, printing a per-interpreter notice for each one skipped.
+6. Tests: unit test that `alpha`/`beta`/`rc` flag as prerelease and `final` does not; resolver test that the filter drops prereleases when the flag is off and keeps them when on.
 
-**Implement:** [Link to your branch/commits as you work]
+**Implement:** not started yet — fork/branch/commit links will go here once Phase III begins.
 
-**Review:** [Self-review checklist - does it follow the project's contribution guidelines?]
+**Review:** before opening a PR, check against maturin's contribution guidelines — run `cargo fmt`, `cargo clippy`, and `cargo test`; keep the diff minimal and matched to each file's style; make sure the new flag's `#[arg]` help text is clear.
 
-**Evaluate:** [How will you verify it works?]
+**Evaluate:** build maturin and run `--find-interpreter` on a machine with both a final and a prerelease Python installed — without the flag the prerelease is skipped with a message and no wheel is built for it; with `--allow-prereleases` it's included again. Fall back to a crafted metadata fixture if no real prerelease interpreter is available.
 
 ---
 

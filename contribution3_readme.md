@@ -3,7 +3,7 @@
 **Contribution Number:** 3  
 **Student:** Tien Nguyen (GitHub: [@tientnc](https://github.com/tientnc))  
 **Issue:** [PyO3/maturin #1975](https://github.com/PyO3/maturin/issues/1975) (Fork: not yet created)  
-**Status:** Phase II Complete (reproduction confirmed twice; implementation not yet started)
+**Status:** Phase III in progress (fix implemented and tested locally on a feature branch; not yet forked/pushed or submitted as a PR)
 
 ---
 
@@ -114,7 +114,7 @@ Using UMPIRE framework (adapted):
 5. `resolver.rs`: thread `allow_prereleases` into `InterpreterResolver`; in `discover_native()`'s `find_interpreter` branch, filter out prereleases unless the flag is set, printing a per-interpreter notice for each one skipped.
 6. Tests: unit test that `alpha`/`beta`/`rc` flag as prerelease and `final` does not; resolver test that the filter drops prereleases when the flag is off and keeps them when on.
 
-**Implement:** not started yet — fork/branch/commit links will go here once Phase III begins.
+**Implement:** done locally on branch `allow-prereleases`. The change follows the plan exactly and stays small (89 insertions / 3 deletions across 7 files, most of it a one-line `is_prerelease` field default repeated across constructors). Key decision: I put `is_prerelease` on `PythonInterpreter` (a runtime-discovered property) rather than on `InterpreterConfig`, because `InterpreterConfig` is deserialized from bundled sysconfig data and constructed in ~15 places — adding a field there would be a large, sprawling diff and semantically wrong (bundled configs are always released versions). I also kept the filter in the resolver rather than in `find_all`, so `maturin list-python` (which also calls `find_all`) still shows every interpreter. Fork/PR links will be added when submitted.
 
 **Review:** before opening a PR, check against maturin's contribution guidelines — run `cargo fmt`, `cargo clippy`, and `cargo test`; keep the diff minimal and matched to each file's style; make sure the new flag's `#[arg]` help text is clear.
 
@@ -126,18 +126,22 @@ Using UMPIRE framework (adapted):
 
 ### Unit Tests
 
-- [ ] Test case 1: [Description]
-- [ ] Test case 2: [Description]
-- [ ] Test case 3: [Description]
+- [x] `test_interpreter_releaselevel_marks_prerelease` (in `discovery.rs`): feeds `from_metadata_message` a message with `releaselevel` of `alpha`, `beta`, and `candidate` and asserts each is flagged `is_prerelease`; `final` is asserted not prerelease. This covers the detection logic that everything else keys off.
+- [x] Existing `discovery.rs`/`build_options.rs` suites still pass after threading the new field/flag through (updated the existing test fixtures to include `releaselevel`/`is_prerelease`).
 
 ### Integration Tests
 
-- [ ] Integration scenario 1
-- [ ] Integration scenario 2
+- The filter itself (resolver dropping a prerelease unless `--allow-prereleases` is passed) is a small `.filter()` over the discovered list; I didn't add a full integration test for it because maturin's discovery probes real interpreters on the host and I don't have an alpha/beta Python installed to exercise the skip path deterministically. If a maintainer wants coverage there, the cleanest spot is a resolver-level test with an injected interpreter list.
 
 ### Manual Testing
 
-[What you tested manually and results]
+Built the binary and verified end to end on my machine (Python 3.12.3, `final`):
+
+- `python3 src/python_interpreter/get_interpreter_metadata.py` now includes `"releaselevel": "final"` (previously absent).
+- `maturin build --help` and `maturin publish --help` now list `--allow-prereleases`.
+- `cargo fmt --check`, `cargo clippy`, and the `python_interpreter`/`build_options` test suites all pass.
+
+The one thing I couldn't exercise locally is the actual skip-a-prerelease behavior, since that needs a real prerelease interpreter on the host; the unit test above stands in for the detection half of it.
 
 ---
 
@@ -147,15 +151,21 @@ Using UMPIRE framework (adapted):
 
 I audited issue #1975 for claimability (checked assignee history via the Timeline API, searched for any competing PR, and ruled out a false-positive bot cross-reference from an unrelated repo), installed a Rust toolchain, and cloned the repo. Then I confirmed, through actually running the script rather than just reading the source, that `releaselevel` gets dropped at the very first stage of interpreter discovery (`get_interpreter_metadata.py`) and never reaches any Rust code. I posted a reproduction comment on the issue before starting Phase III, the same practice that worked well on my first two contributions of getting maintainer sign-off before writing code, and re-ran the same checks a week later against the latest code since I hadn't heard back yet.
 
-### Week [X] Progress
+### Week 2 Progress
 
-[Continue documenting as you work]
+Implemented the fix on branch `allow-prereleases`, following the data flow end to end: collect `releaselevel` in the probe script, carry it through `InterpreterMetadataMessage`, mark each discovered `PythonInterpreter` as prerelease-or-not, add the `--allow-prereleases` flag, and filter in the resolver. Added a unit test for the detection, updated existing test fixtures, and confirmed `fmt`/`clippy`/tests pass and the flag shows up in `--help`. Kept the diff deliberately small since the maintainers value easy-to-review changes. Still waiting on a maintainer reply to the issue; holding off on opening the PR until then / until I decide to submit.
 
 ### Code Changes
 
-- **Files modified:** [List]
-- **Key commits:** [Links to important commits]
-- **Approach decisions:** [Why you chose certain approaches]
+- **Files modified:**
+  - `src/python_interpreter/get_interpreter_metadata.py` — collect `releaselevel`.
+  - `src/python_interpreter/discovery.rs` — `releaselevel` field on `InterpreterMetadataMessage`; set `is_prerelease` in `from_metadata_message`; unit test.
+  - `src/python_interpreter/mod.rs` — `is_prerelease` field on `PythonInterpreter`.
+  - `src/python_interpreter/resolver.rs` — thread `allow_prereleases`; filter prereleases in `discover_native`.
+  - `src/build_options.rs` — `--allow-prereleases` CLI flag on `PythonOptions`.
+  - `src/build_context/builder.rs`, `src/develop/mod.rs` — pass the new flag through.
+- **Key commits:** [Links to important commits — pending push]
+- **Approach decisions:** field lives on `PythonInterpreter` not `InterpreterConfig` (runtime property, avoids a 15-site sprawling diff and bundled-config semantics); filter lives in the resolver not `find_all` (keeps `list-python` showing everything); explicit `-i` interpreters are never filtered (naming one is already opt-in).
 
 ---
 

@@ -153,6 +153,14 @@ Checked issue #1975 was actually claimable (assignee history, no competing PR, r
 
 Implemented the fix on branch `allow-prereleases`: collect `releaselevel` in the probe script, carry it through `InterpreterMetadataMessage`, mark interpreters as prerelease or not, add `--allow-prereleases`, filter in the resolver. Added a unit test, updated existing fixtures, confirmed fmt/clippy/tests pass. Kept the diff small on purpose. Forked the repo, pushed the branch, and opened PR #3276. Still no reply on the original issue.
 
+### Week 3 Progress
+
+CI initially failed on every job: adding `--allow-prereleases` changed `maturin build/publish --help`, which broke a snapshot test (`tests/cmd/build.stdout`/`publish.stdout`) that checks `--help` output exactly. Regenerated those two snapshots and pushed the fix.
+
+One job, `Test (windows-11-arm, 3.15-dev)`, still failed - but the log showed a CLR access violation during environment setup, before any test ran, so it's a runner infra issue, not this change. Drafted a PR comment explaining that (not yet posted).
+
+Branch had also drifted 15 commits behind `main` by this point. Rebased onto latest `main` (auto-merged cleanly, no conflicts) and re-ran `fmt`/`clippy`/the full test suite locally to confirm nothing broke. Force-push to update the PR is still pending. Still no maintainer reply on the issue or PR.
+
 ### Code Changes
 
 - **Files modified:**
@@ -162,7 +170,7 @@ Implemented the fix on branch `allow-prereleases`: collect `releaselevel` in the
   - `resolver.rs` - thread `allow_prereleases`; filter in `discover_native`
   - `build_options.rs` - `--allow-prereleases` flag
   - `build_context/builder.rs`, `develop/mod.rs` - pass the flag through (Rust requires these call sites to update)
-- **Key commits:** see PR [#3276](https://github.com/PyO3/maturin/pull/3276)
+- **Key commits:** see PR [#3276](https://github.com/PyO3/maturin/pull/3276) - feature commit, a follow-up fixing the `cli_tests` help-text snapshots, then a rebase onto latest `main` (pushed, waiting for the checks to run)
 - **Approach decisions:** `is_prerelease` on `PythonInterpreter`, not `InterpreterConfig` (avoids touching ~15 constructors, and bundled configs are always released versions anyway); filter in the resolver, not `find_all()` (keeps `list-python` unfiltered); explicit `-i` interpreters are never filtered.
 
 ---

@@ -190,17 +190,26 @@ Branch had also drifted 15 commits behind `main` by this point. Rebased onto lat
 
 ## Learnings & Reflections
 
+Across the three contributions this cohort: 2 PRs merged ([swift-java #1701](https://github.com/swiftlang/swift-java/pull/1701), [swift-java #789](https://github.com/swiftlang/swift-java/pull/789)), and this one (maturin #3276) still open. If no maintainer responds, it may just stay a well-understood issue with a ready fix rather than a merged one - that's a real possible outcome, not a failure of the work itself.
+
+Sometimes getting merged is hard, and it isn't only about writing a correct fix. Some of it comes down to understanding the repository well enough - its current issues, its existing patterns - to propose a fix that actually fits. The rest is on the maintainer's side: their time, their priorities, their reply. I do my part; they do theirs.
+
 ### Technical Skills Gained
 
-[What you learned technically]
+- Tracing a bug by following where the data actually gets dropped (probe script to message struct to resolver), instead of guessing where the fix belongs.
+- Rust CLI conventions (`clap` derive macros, feature flags) and enough of maturin's interpreter-discovery internals to make a small, targeted change instead of a rewrite.
+- Reading CI logs instead of assuming: telling apart a real regression, a snapshot test mismatch, and runner infra flake by actually checking the job output.
+- Rebasing a long-lived branch cleanly instead of letting a PR go stale while waiting for review.
 
 ### Challenges Overcome
 
-[What was hard and how you solved it]
+- No maintainer reply for weeks at different points across the three contributions - had to keep making forward progress (rebasing, fixing CI) instead of just waiting idle.
+- Verifying claims instead of assuming them: checking who's actually a maintainer from their PR history, not just a label; confirming a CI failure was infra and not my code by reading the actual logs.
 
 ### What I'd Do Differently Next Time
 
-[Reflection on your process]
+- Weigh a maintainer's responsiveness more when picking an issue, not just how well-scoped the issue itself is - a good fix with no reviewer doesn't merge.
+- Keep branches rebased proactively instead of letting them drift until a push forces the issue.
 
 ---
 
